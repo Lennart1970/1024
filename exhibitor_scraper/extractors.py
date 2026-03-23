@@ -4,7 +4,7 @@ import json
 import re
 from urllib.parse import urljoin
 
-from .discovery import DEFAULT_HEADERS, normalized_domain
+from .discovery import DEFAULT_HEADERS, clean_text, normalized_domain
 from .models import EventDiscovery, ExhibitorRecord
 
 
@@ -150,16 +150,14 @@ class Extractor:
             link = cells[0].select_one("a[href]")
             if not link:
                 continue
-            href = (link.get("href") or "").strip()
+            href = clean_text((link.get("href") or "").strip())
             name = self._clean_name(link.get_text(" ", strip=True))
             if not name or name.lower() == "exhibitor":
                 continue
-            if href in {"", "#"}:
-                domain = None
-                confidence = 0.55
-            else:
-                domain = normalized_domain(href)
-                confidence = self._score(name, href, source="html")
+            if href in {"", "#", "javascript:void(0)", "javascript:void(0);"}:
+                continue
+            domain = normalized_domain(href)
+            confidence = self._score(name, href, source="html")
             records.append(
                 ExhibitorRecord(
                     name=name,
@@ -234,6 +232,7 @@ class Extractor:
         return None
 
     def _clean_name(self, value: str) -> str:
+        value = clean_text(value)
         return re.sub(r"\s+", " ", value).strip(" -|\t\n\r")
 
     def _score(self, name: str, website: str | None, source: str) -> float:

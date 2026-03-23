@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import unicodedata
+from html import unescape
 from urllib.parse import urljoin, urlparse
 
 from .models import EventDiscovery
@@ -82,11 +84,94 @@ class EventDiscoverer:
         return None
 
 
+SECOND_LEVEL_SUFFIXES = {
+    "co.uk",
+    "org.uk",
+    "gov.uk",
+    "ac.uk",
+    "com.au",
+    "net.au",
+    "org.au",
+    "co.jp",
+    "com.br",
+    "com.tr",
+}
+
+LANDING_SUBDOMAINS = {
+    "www",
+    "m",
+    "amp",
+    "go",
+    "pages",
+    "page",
+    "info",
+    "cloud",
+    "contact",
+    "landing",
+    "links",
+}
+
+MOJIBAKE_MAP = {
+    "â€™": "’",
+    "â€œ": "“",
+    "â€": "”",
+    "â€“": "–",
+    "â€”": "—",
+    "Ã©": "é",
+    "Ã¨": "è",
+    "Ã¢": "â",
+    "Ã¼": "ü",
+    "Ã¶": "ö",
+    "Ã„": "Ä",
+    "Ã–": "Ö",
+    "Ãœ": "Ü",
+    "Äƒ": "ă",
+    "Èƒ": "ă",
+    "Ä‚": "Ă",
+    "È‚": "Ă",
+    "È™": "ș",
+    "È˜": "Ș",
+    "È›": "ț",
+    "Èš": "Ț",
+    "Å£": "ț",
+    "Å¢": "Ț",
+    "ÅŸ": "ș",
+    "Åž": "Ș",
+}
+
+
+def clean_text(value: str | None) -> str:
+    if not value:
+        return ""
+    text = unescape(value)
+    for bad, good in MOJIBAKE_MAP.items():
+        text = text.replace(bad, good)
+    text = text.replace("�", "")
+    text = unicodedata.normalize("NFKC", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def normalized_domain(url: str | None) -> str | None:
     if not url:
         return None
     parsed = urlparse(url if "://" in url else f"https://{url}")
-    domain = parsed.netloc.lower().strip()
-    if domain.startswith("www."):
-        domain = domain[4:]
-    return domain or None
+    host = parsed.netloc.lower().strip()
+    if not host:
+        return None
+    if host.startswith("www."):
+        host = host[4:]
+    return _collapse_landing_subdomain(host)
+
+
+def _collapse_landing_subdomain(host: str) -> str:
+    parts = [part for part in host.split(".") if part]
+    if len(parts) <= 2:
+        return host
+    suffix = ".".join(parts[-2:])
+    if suffix in SECOND_LEVEL_SUFFIXES and len(parts) >= 3:
+        base = ".".join(parts[-3:])
+    else:
+        base = ".".join(parts[-2:])
+    if parts[0] in LANDING_SUBDOMAINS:
+        return base
+    return host
