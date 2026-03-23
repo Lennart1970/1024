@@ -233,7 +233,9 @@ class Extractor:
 
     def _clean_name(self, value: str) -> str:
         value = clean_text(value)
-        return re.sub(r"\s+", " ", value).strip(" -|\t\n\r")
+        value = re.sub(r"\s*\*+$", "", value)
+        value = re.sub(r"\s+", " ", value).strip(" -|\t\n\r")
+        return value
 
     def _score(self, name: str, website: str | None, source: str) -> float:
         score = 0.45
@@ -254,10 +256,24 @@ class Extractor:
         return None
 
     def _dedupe(self, records: list[ExhibitorRecord]) -> list[ExhibitorRecord]:
-        deduped: dict[tuple[str, str | None], ExhibitorRecord] = {}
+        deduped: dict[tuple[str, str], ExhibitorRecord] = {}
         for record in records:
-            key = (record.name.lower(), record.official_domain)
+            canonical_name = self._canonical_name(record.name)
+            key = ("domain", record.official_domain) if record.official_domain else ("name", canonical_name)
             existing = deduped.get(key)
-            if existing is None or record.confidence > existing.confidence:
+            if existing is None or self._is_better_record(record, existing):
                 deduped[key] = record
         return sorted(deduped.values(), key=lambda item: item.name.lower())
+
+    def _canonical_name(self, value: str) -> str:
+        value = clean_text(value).lower()
+        value = re.sub(r"\b(s\.?r\.?l\.?|s\.?a\.?|ltd\.?|llc\.?|gmbh|ag|spa|b\.?v\.?|nv|inc\.?|corp\.?|corporation|company|co\.?|group|holding)\b", " ", value)
+        value = re.sub(r"[^a-z0-9]+", " ", value)
+        return re.sub(r"\s+", " ", value).strip()
+
+    def _is_better_record(self, candidate: ExhibitorRecord, existing: ExhibitorRecord) -> bool:
+        if candidate.confidence != existing.confidence:
+            return candidate.confidence > existing.confidence
+        if bool(candidate.official_domain) != bool(existing.official_domain):
+            return bool(candidate.official_domain)
+        return len(candidate.name) > len(existing.name)
