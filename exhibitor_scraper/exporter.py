@@ -18,7 +18,7 @@ class Exporter:
         self.export_dir.mkdir(parents=True, exist_ok=True)
         path = self.export_dir / "apollo_ready_exhibitors.csv"
         with path.open("w", encoding="utf-8", newline="") as handle:
-            writer = csv.writer(handle)
+            writer = csv.writer(handle, quoting=csv.QUOTE_ALL)
             writer.writerow(APOLLO_COLUMNS)
             for row in rows:
                 writer.writerow([row["exhibitor_name"], row["official_domain"] or "", row["event_url"], row["directory_url"] or "", row["extraction_method"] or "", row["confidence"], row["source_url"] or ""])
