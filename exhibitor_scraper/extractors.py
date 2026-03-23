@@ -77,9 +77,11 @@ class Extractor:
         response = requests.get(url, headers=DEFAULT_HEADERS, timeout=self.timeout)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, "html.parser")
-        records = self._records_from_cards(soup, url)
+        records = self._records_from_tables(soup, url)
         if not records:
-            raise ExtractionError(f"No exhibitor cards detected in HTML directory: {url}")
+            records = self._records_from_cards(soup, url)
+        if not records:
+            raise ExtractionError(f"No exhibitor rows detected in HTML directory: {url}")
         return records
 
     def _extract_paginated_html(self, url: str) -> list[ExhibitorRecord]:
@@ -92,7 +94,10 @@ class Extractor:
             response = requests.get(page_url, headers=DEFAULT_HEADERS, timeout=self.timeout)
             response.raise_for_status()
             soup = BeautifulSoup(response.text, "html.parser")
-            records.extend(self._records_from_cards(soup, page_url))
+            page_records = self._records_from_tables(soup, page_url)
+            if not page_records:
+                page_records = self._records_from_cards(soup, page_url)
+            records.extend(page_records)
         if not records:
             raise ExtractionError(f"Pagination audit found zero exhibitors at {url}")
         return records
@@ -115,7 +120,9 @@ class Extractor:
             browser.close()
 
         soup = BeautifulSoup(html, "html.parser")
-        records = self._records_from_cards(soup, url)
+        records = self._records_from_tables(soup, url)
+        if not records:
+            records = self._records_from_cards(soup, url)
         if records:
             return records
         raise ExtractionError(f"Playwright rendered page but no exhibitors could be extracted: {url}")
@@ -133,6 +140,36 @@ class Extractor:
             if re.search(r"page=\d+", href, flags=re.IGNORECASE) or re.search(r"/page/\d+", href, flags=re.IGNORECASE):
                 urls.add(urljoin(root_url, href))
         return sorted(urls)
+
+    def _records_from_tables(self, soup, source_url: str) -> list[ExhibitorRecord]:
+        records: list[ExhibitorRecord] = []
+        for row in soup.select("table.cmsmasters_table tr"):
+            cells = row.select("td")
+            if len(cells) < 2:
+                continue
+            link = cells[0].select_one("a[href]")
+            if not link:
+                continue
+            href = (link.get("href") or "").strip()
+            name = self._clean_name(link.get_text(" ", strip=True))
+            if not name or name.lower() == "exhibitor":
+                continue
+            if href in {"", "#"}:
+                domain = None
+                confidence = 0.55
+            else:
+                domain = normalized_domain(href)
+                confidence = self._score(name, href, source="html")
+            records.append(
+                ExhibitorRecord(
+                    name=name,
+                    official_domain=domain,
+                    source_url=source_url,
+                    confidence=confidence,
+                    raw_payload={"source": "table_row"},
+                )
+            )
+        return records
 
     def _records_from_cards(self, soup, source_url: str) -> list[ExhibitorRecord]:
         selectors = [".exhibitor-card", ".vendor-card", ".company-card", "[data-exhibitor-id]", "article", ".card", "li"]
