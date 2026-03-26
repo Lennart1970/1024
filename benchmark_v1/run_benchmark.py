@@ -343,18 +343,28 @@ def build_prompt(question_text: str) -> str:
 
 
 def load_questions_csv(conn: sqlite3.Connection, path: Path) -> None:
+    conn.execute("UPDATE questions SET active = 0")
     with path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            exists = conn.execute(
+            existing = conn.execute(
                 "SELECT id FROM questions WHERE subset = ? AND question_text = ?",
                 (row["subset"], row["question_text"]),
             ).fetchone()
-            if not exists:
+            if existing:
                 conn.execute(
                     """
-                    INSERT INTO questions (subset, question_text, expected_type)
-                    VALUES (?, ?, ?)
+                    UPDATE questions
+                    SET expected_type = ?, active = 1, question_version = 'v1'
+                    WHERE id = ?
+                    """,
+                    (row.get("expected_type"), int(existing["id"])),
+                )
+            else:
+                conn.execute(
+                    """
+                    INSERT INTO questions (subset, question_text, expected_type, active)
+                    VALUES (?, ?, ?, 1)
                     """,
                     (row["subset"], row["question_text"], row.get("expected_type")),
                 )

@@ -133,6 +133,7 @@ def main() -> None:
               q.question_text,
               COALESCE(qm.divergence_score, 0) AS divergence_score,
               COALESCE(qm.refusal_rate, 0) AS refusal_rate,
+              qm.notes AS notes,
               m.provider,
               m.model_name,
               r.raw_answer,
@@ -165,6 +166,7 @@ def main() -> None:
                     "question_text": str(row["question_text"]),
                     "divergence_score": float(row["divergence_score"] or 0),
                     "refusal_rate": float(row["refusal_rate"] or 0),
+                    "notes": row["notes"] or "",
                     "responses": [],
                 },
             )
@@ -221,7 +223,7 @@ def main() -> None:
             question_cards.append(
                 f"""
                 <section class=\"question-card\" data-subset=\"{html.escape(data['subset'])}\" data-score=\"{data['divergence_score']:.4f}\">
-                  <div class=\"meta\">q{qid} · {html.escape(data['subset'])} · divergence {data['divergence_score']:.3f} · refusal {data['refusal_rate']:.2f}</div>
+                  <div class=\"meta\">q{qid} · {html.escape(data['subset'])} · divergence {data['divergence_score']:.3f} · refusal {data['refusal_rate']:.2f}{(' · indicator ' + html.escape(data['notes'])) if data['notes'] else ''}</div>
                   <h2>{html.escape(data['question_text'])}</h2>
                   <div class=\"responses\">{''.join(response_html)}</div>
                 </section>
