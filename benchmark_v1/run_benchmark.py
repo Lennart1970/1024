@@ -5,6 +5,8 @@ import json
 import os
 import sqlite3
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -64,23 +66,40 @@ class OpenAIProvider(BaseProvider):
     provider_name = "openai"
 
     def __init__(self) -> None:
-        from openai import OpenAI
-
-        self.client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        self.api_key = os.environ["OPENAI_API_KEY"]
+        self.base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
     def generate(self, model_name: str, prompt_text: str) -> ProviderResult:
         start = time.time()
         request_payload = {
             "model": model_name,
             "input": prompt_text,
-            "temperature": TEMPERATURE,
-            "top_p": TOP_P,
             "max_output_tokens": MAX_TOKENS,
         }
         try:
-            resp = self.client.responses.create(**request_payload)
-            text = getattr(resp, "output_text", None)
-            usage = getattr(resp, "usage", None)
+            body = json.dumps(request_payload).encode("utf-8")
+            request = urllib.request.Request(
+                url=f"{self.base_url}/responses",
+                data=body,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=120) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+
+            text = payload.get("output_text")
+            if not text:
+                text_parts = []
+                for item in payload.get("output", []):
+                    for content in item.get("content", []):
+                        if content.get("type") == "output_text":
+                            text_parts.append(content.get("text", ""))
+                text = "\n".join(part for part in text_parts if part).strip() or None
+
+            usage = payload.get("usage", {}) or {}
             return ProviderResult(
                 raw_answer=text,
                 normalized_answer=(text or "").strip() or None,
@@ -89,13 +108,34 @@ class OpenAIProvider(BaseProvider):
                 error_type=None,
                 error_message=None,
                 latency_ms=int((time.time() - start) * 1000),
-                input_tokens=getattr(usage, "input_tokens", None),
-                output_tokens=getattr(usage, "output_tokens", None),
+                input_tokens=usage.get("input_tokens"),
+                output_tokens=usage.get("output_tokens"),
+                finish_reason=payload.get("status"),
+                requested_model=model_name,
+                returned_model=payload.get("model"),
+                raw_request=request_payload,
+                raw_response=payload,
+            )
+        except urllib.error.HTTPError as e:
+            try:
+                error_payload = json.loads(e.read().decode("utf-8"))
+            except Exception:
+                error_payload = {}
+            return ProviderResult(
+                raw_answer=None,
+                normalized_answer=None,
+                refused=False,
+                error=True,
+                error_type="HTTPError",
+                error_message=f"HTTP {e.code}",
+                latency_ms=int((time.time() - start) * 1000),
+                input_tokens=None,
+                output_tokens=None,
                 finish_reason=None,
                 requested_model=model_name,
-                returned_model=getattr(resp, "model", None),
+                returned_model=None,
                 raw_request=request_payload,
-                raw_response=resp.model_dump() if hasattr(resp, "model_dump") else {},
+                raw_response=error_payload,
             )
         except Exception as e:
             return ProviderResult(
