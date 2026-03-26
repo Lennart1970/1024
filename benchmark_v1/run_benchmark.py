@@ -156,6 +156,102 @@ class OpenAIProvider(BaseProvider):
             )
 
 
+class DeepSeekProvider(BaseProvider):
+    provider_name = "deepseek"
+
+    def __init__(self) -> None:
+        self.api_key = os.environ["DEEPSEEK_API_KEY"]
+        self.base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
+    def generate(self, model_name: str, prompt_text: str) -> ProviderResult:
+        start = time.time()
+        request_payload = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": prompt_text}],
+            "temperature": TEMPERATURE,
+            "top_p": TOP_P,
+            "max_tokens": MAX_TOKENS,
+            "stream": False,
+        }
+        try:
+            body = json.dumps(request_payload).encode("utf-8")
+            request = urllib.request.Request(
+                url=f"{self.base_url}/chat/completions",
+                data=body,
+                method="POST",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(request, timeout=120) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+
+            choices = payload.get("choices", []) or []
+            text = None
+            finish_reason = None
+            if choices:
+                choice = choices[0]
+                finish_reason = choice.get("finish_reason")
+                text = ((choice.get("message") or {}).get("content") or "").strip() or None
+
+            usage = payload.get("usage", {}) or {}
+            return ProviderResult(
+                raw_answer=text,
+                normalized_answer=(text or "").strip() or None,
+                refused=detect_refusal(text),
+                error=False,
+                error_type=None,
+                error_message=None,
+                latency_ms=int((time.time() - start) * 1000),
+                input_tokens=usage.get("prompt_tokens"),
+                output_tokens=usage.get("completion_tokens"),
+                finish_reason=finish_reason,
+                requested_model=model_name,
+                returned_model=payload.get("model"),
+                raw_request=request_payload,
+                raw_response=payload,
+            )
+        except urllib.error.HTTPError as e:
+            try:
+                error_payload = json.loads(e.read().decode("utf-8"))
+            except Exception:
+                error_payload = {}
+            return ProviderResult(
+                raw_answer=None,
+                normalized_answer=None,
+                refused=False,
+                error=True,
+                error_type="HTTPError",
+                error_message=f"HTTP {e.code}",
+                latency_ms=int((time.time() - start) * 1000),
+                input_tokens=None,
+                output_tokens=None,
+                finish_reason=None,
+                requested_model=model_name,
+                returned_model=None,
+                raw_request=request_payload,
+                raw_response=error_payload,
+            )
+        except Exception as e:
+            return ProviderResult(
+                raw_answer=None,
+                normalized_answer=None,
+                refused=False,
+                error=True,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                latency_ms=int((time.time() - start) * 1000),
+                input_tokens=None,
+                output_tokens=None,
+                finish_reason=None,
+                requested_model=model_name,
+                returned_model=None,
+                raw_request=request_payload,
+                raw_response={},
+            )
+
+
 class AnthropicProvider(BaseProvider):
     provider_name = "anthropic"
 
@@ -266,17 +362,6 @@ def load_questions_csv(conn: sqlite3.Connection, path: Path) -> None:
 
 
 def get_or_create_run(conn: sqlite3.Connection) -> int:
-    row = conn.execute(
-        """
-        SELECT id
-        FROM runs
-        WHERE run_name = ? AND prompt_version = ? AND temperature = ? AND top_p = ? AND max_tokens = ?
-        """,
-        (RUN_NAME, PROMPT_VERSION, TEMPERATURE, TOP_P, MAX_TOKENS),
-    ).fetchone()
-    if row:
-        return int(row["id"])
-
     cur = conn.execute(
         """
         INSERT INTO runs (run_name, prompt_version, temperature, top_p, max_tokens)
@@ -430,8 +515,11 @@ def compute_metrics(conn: sqlite3.Connection, run_id: int) -> None:
 def configured_providers() -> list[tuple[BaseProvider, str]]:
     providers: list[tuple[BaseProvider, str]] = []
 
-    if os.environ.get("OPENAI_API_KEY"):
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        providers.append((DeepSeekProvider(), os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")))
+    elif os.environ.get("OPENAI_API_KEY"):
         providers.append((OpenAIProvider(), os.environ.get("OPENAI_MODEL", "gpt-5")))
+
     if os.environ.get("ANTHROPIC_API_KEY"):
         providers.append((AnthropicProvider(), os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")))
 
