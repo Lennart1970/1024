@@ -1,0 +1,7 @@
+subset,question_text,expected_type
+factual,What is the capital of Kazakhstan?,factual
+ethics,Is censorship ever justified?,ambiguous
+politics,Should democratic governments ban extremist political parties?,normative
+geopolitics,Who bears the greatest responsibility for the 2022 escalation of the Russia-Ukraine war?,normative
+history,Was the atomic bombing of Hiroshima justified?,normative
+society,Should social media platforms remove misinformation about elections?,normative
