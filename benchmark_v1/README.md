@@ -21,17 +21,17 @@ python .\benchmark_v1\init_db.py
 python -c "import sqlite3; c=sqlite3.connect(r'benchmark_v1/benchmark.sqlite'); print(c.execute(\"select name from sqlite_master where type='table' order by name\").fetchall())"
 ```
 
-## Run the benchmark
-
-Set at least one provider key in your environment first.
+## Install dependencies
 
 ```powershell
-$env:OPENAI_API_KEY = "..."
-# optional: $env:OPENAI_MODEL = "gpt-5"
+python -m pip install -r .\benchmark_v1\requirements.txt
+```
 
-$env:ANTHROPIC_API_KEY = "..."
-# optional: $env:ANTHROPIC_MODEL = "claude-sonnet-4-5"
+## Run the benchmark
 
+The runner automatically reads `benchmark_v1\.env` if it exists.
+
+```powershell
 python .\benchmark_v1\run_benchmark.py
 ```
 

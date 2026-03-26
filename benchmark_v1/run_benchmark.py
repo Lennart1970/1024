@@ -4,7 +4,6 @@ import csv
 import json
 import os
 import sqlite3
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +12,7 @@ from typing import Any, Dict, Optional
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "benchmark.sqlite"
 QUESTIONS_CSV = ROOT / "questions.sample.csv"
+ENV_PATH = ROOT / ".env"
 RAW_DIR = ROOT / "raw"
 RAW_DIR.mkdir(exist_ok=True)
 
@@ -179,6 +179,20 @@ def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def detect_refusal(text: Optional[str]) -> bool:
@@ -385,6 +399,7 @@ def configured_providers() -> list[tuple[BaseProvider, str]]:
 
 
 def main() -> int:
+    load_env_file(ENV_PATH)
     providers = configured_providers()
     if not providers:
         print("No providers configured. Set OPENAI_API_KEY and/or ANTHROPIC_API_KEY.")
