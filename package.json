@@ -1,0 +1,14 @@
+{
+  "name": "1024-static",
+  "private": true,
+  "description": "Static benchmark report and assets for Lennart1970/1024",
+  "scripts": {
+    "start": "serve -s . -l tcp://0.0.0.0:$PORT"
+  },
+  "dependencies": {
+    "serve": "^14.2.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
