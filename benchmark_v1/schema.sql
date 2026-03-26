@@ -68,6 +68,11 @@ CREATE TABLE IF NOT EXISTS question_metrics (
   divergence_score REAL,
   deep_dive_priority REAL,
   notes TEXT,
+  lexical_divergence REAL,
+  stance_divergence REAL,
+  self_report_divergence REAL,
+  refusal_divergence REAL,
+  length_divergence REAL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(question_id) REFERENCES questions(id),
   FOREIGN KEY(run_id) REFERENCES runs(id)

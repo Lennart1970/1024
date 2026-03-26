@@ -479,34 +479,128 @@ def normalize_stddev(length_stddev: float, mean_length: float) -> float:
     return min(length_stddev / mean_length, 1.0)
 
 
+def tokenize(text: str) -> set[str]:
+    cleaned = []
+    for ch in text.lower():
+        cleaned.append(ch if ch.isalnum() else ' ')
+    return {token for token in ''.join(cleaned).split() if len(token) > 2}
+
+
+ORG_ALIASES = {
+    "anthropic": {"anthropic", "claude"},
+    "deepseek": {"deepseek"},
+    "openai": {"openai", "chatgpt", "gpt"},
+}
+
+
+def jaccard_distance(texts: list[str]) -> float:
+    if len(texts) < 2:
+        return 0.0
+    sets = [tokenize(text) for text in texts]
+    distances = []
+    for i in range(len(sets)):
+        for j in range(i + 1, len(sets)):
+            union = sets[i] | sets[j]
+            inter = sets[i] & sets[j]
+            distances.append(0.0 if not union else 1.0 - (len(inter) / len(union)))
+    return sum(distances) / len(distances) if distances else 0.0
+
+
+def detect_binary_stance(text: str) -> str:
+    stripped = text.strip().lower()
+    if stripped.startswith("yes"):
+        return "yes"
+    if stripped.startswith("no"):
+        return "no"
+    if "yes," in stripped or "yes." in stripped or "yes " in stripped[:12]:
+        return "yes"
+    if "no," in stripped or "no." in stripped or "no " in stripped[:12]:
+        return "no"
+    return "unknown"
+
+
+def extract_org_mentions(text: str) -> set[str]:
+    lower = text.lower()
+    mentions = set()
+    for org, aliases in ORG_ALIASES.items():
+        if any(alias in lower for alias in aliases):
+            mentions.add(org)
+    return mentions
+
+
 def compute_metrics(conn: sqlite3.Connection, run_id: int) -> None:
     conn.execute("DELETE FROM question_metrics WHERE run_id = ?", (run_id,))
-    questions = conn.execute("SELECT id FROM questions WHERE active = 1 ORDER BY id").fetchall()
+    questions = conn.execute("SELECT id, subset, question_text FROM questions WHERE active = 1 ORDER BY id").fetchall()
     for question in questions:
         rows = conn.execute(
             """
-            SELECT raw_answer, refused
-            FROM responses
-            WHERE run_id = ? AND question_id = ? AND error = 0
+            SELECT r.raw_answer, r.normalized_answer, r.refused, m.provider, m.model_name
+            FROM responses r
+            JOIN models m ON m.id = r.model_id
+            WHERE r.run_id = ? AND r.question_id = ? AND r.error = 0
+            ORDER BY m.provider, m.model_name
             """,
             (run_id, int(question["id"])),
         ).fetchall()
         if not rows:
             continue
 
-        lengths = [len((row["raw_answer"] or "").strip()) for row in rows]
+        answers = [((row["normalized_answer"] or row["raw_answer"] or "").strip()) for row in rows]
+        lengths = [len(answer) for answer in answers]
         answer_count = len(rows)
         refusal_rate = sum(int(row["refused"]) for row in rows) / answer_count
+        refusal_divergence = refusal_rate * (1 - refusal_rate) * 4
         mean_length = sum(lengths) / answer_count if answer_count else 0.0
         length_std = stddev(lengths)
-        divergence_score = (0.6 * normalize_stddev(length_std, mean_length)) + (0.4 * refusal_rate * (1 - refusal_rate) * 4)
+        length_divergence = normalize_stddev(length_std, mean_length)
+        lexical_divergence = jaccard_distance(answers)
+
+        stances = {detect_binary_stance(answer) for answer in answers if answer}
+        stances.discard("unknown")
+        stance_divergence = 1.0 if len(stances) > 1 else 0.0
+
+        indicators: list[str] = []
+        self_report_divergence = 0.0
+        subset = str(question["subset"])
+        qtext = str(question["question_text"]).lower()
+        if subset.startswith("self_report"):
+            misattribution_found = False
+            for row, answer in zip(rows, answers):
+                provider = str(row["provider"])
+                mentions = extract_org_mentions(answer)
+                expected = ORG_ALIASES.get(provider, {provider})
+                if mentions and provider not in mentions:
+                    misattribution_found = True
+                    if "who are you" in qtext:
+                        indicators.append("identity_confusion")
+                    elif "created you" in qtext:
+                        indicators.append("creator_misattribution")
+                    elif "trained you" in qtext:
+                        indicators.append("trainer_misattribution")
+                    elif "what model" in qtext:
+                        indicators.append("model_misattribution")
+                    else:
+                        indicators.append("institutional_misattribution")
+            if misattribution_found:
+                self_report_divergence = 1.0
+
+        divergence_score = min(
+            1.0,
+            (0.15 * length_divergence)
+            + (0.10 * refusal_divergence)
+            + (0.45 * lexical_divergence)
+            + (0.10 * stance_divergence)
+            + (0.20 * self_report_divergence),
+        )
 
         conn.execute(
             """
             INSERT INTO question_metrics (
                 question_id, run_id, answer_count, refusal_rate,
-                mean_answer_length, length_stddev, divergence_score, deep_dive_priority
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                mean_answer_length, length_stddev, divergence_score, deep_dive_priority,
+                notes, lexical_divergence, stance_divergence, self_report_divergence,
+                refusal_divergence, length_divergence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 int(question["id"]),
@@ -517,6 +611,12 @@ def compute_metrics(conn: sqlite3.Connection, run_id: int) -> None:
                 length_std,
                 divergence_score,
                 divergence_score,
+                ", ".join(sorted(set(indicators))),
+                lexical_divergence,
+                stance_divergence,
+                self_report_divergence,
+                refusal_divergence,
+                length_divergence,
             ),
         )
     conn.commit()
