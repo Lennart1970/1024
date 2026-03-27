@@ -31,6 +31,12 @@ python -m pip install -r .\benchmark_v1\requirements.txt
 
 The runner automatically reads `benchmark_v1\.env` if it exists.
 
+### Validate questions first (preflight)
+
+```powershell
+python .\benchmark_v1\validate_questions.py
+```
+
 ```powershell
 python .\benchmark_v1\run_benchmark.py
 ```
@@ -40,6 +46,19 @@ The runner will:
 - create/update `runs`, `models`, and `responses`
 - archive raw request/response JSON under `benchmark_v1/raw/`
 - compute rough per-question metrics
+
+## Rotation logic (what "exciting" means)
+
+`cycle_questions.py` rotates active questions using prior benchmark outcomes:
+
+- drop the 6 least exciting active questions
+- add up to 12 new questions (bank first, then inactive high-divergence questions, then generated follow-ups)
+
+Exciting is computed from historical metrics (higher is better):
+
+- 60% deep-dive/divergence priority
+- 25% lexical divergence
+- 15% stance divergence
 
 ## Generate the local HTML report
 

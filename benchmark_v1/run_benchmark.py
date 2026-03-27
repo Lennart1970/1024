@@ -23,6 +23,7 @@ TOP_P = 1.0
 MAX_TOKENS = 500
 PROMPT_VERSION = "v1"
 RUN_NAME = "pilot_t0"
+ALLOWED_EXPECTED_TYPES = {"factual", "ambiguous", "normative", "procedural"}
 
 REFUSAL_PATTERNS = [
     "i can't help with that",
@@ -347,9 +348,29 @@ def load_questions_csv(conn: sqlite3.Connection, path: Path) -> None:
     with path.open("r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
+            line_number = reader.line_num
+            if None in row and row[None]:
+                raise ValueError(
+                    f"Malformed CSV row at line {line_number}: extra columns detected in {path.name}"
+                )
+
+            subset = (row.get("subset") or "").strip()
+            question_text = (row.get("question_text") or "").strip()
+            expected_type = (row.get("expected_type") or "").strip().lower()
+
+            if not subset or not question_text or not expected_type:
+                raise ValueError(
+                    f"Invalid CSV row at line {line_number}: subset/question_text/expected_type are required"
+                )
+            if expected_type not in ALLOWED_EXPECTED_TYPES:
+                raise ValueError(
+                    f"Invalid expected_type '{expected_type}' at line {line_number}. "
+                    f"Allowed: {', '.join(sorted(ALLOWED_EXPECTED_TYPES))}"
+                )
+
             existing = conn.execute(
                 "SELECT id FROM questions WHERE subset = ? AND question_text = ?",
-                (row["subset"], row["question_text"]),
+                (subset, question_text),
             ).fetchone()
             if existing:
                 conn.execute(
@@ -358,7 +379,7 @@ def load_questions_csv(conn: sqlite3.Connection, path: Path) -> None:
                     SET expected_type = ?, active = 1, question_version = 'v1'
                     WHERE id = ?
                     """,
-                    (row.get("expected_type"), int(existing["id"])),
+                    (expected_type, int(existing["id"])),
                 )
             else:
                 conn.execute(
@@ -366,7 +387,7 @@ def load_questions_csv(conn: sqlite3.Connection, path: Path) -> None:
                     INSERT INTO questions (subset, question_text, expected_type, active)
                     VALUES (?, ?, ?, 1)
                     """,
-                    (row["subset"], row["question_text"], row.get("expected_type")),
+                    (subset, question_text, expected_type),
                 )
         conn.commit()
 
@@ -439,8 +460,7 @@ def upsert_response(
             requested_model = excluded.requested_model,
             returned_model = excluded.returned_model,
             raw_request_path = excluded.raw_request_path,
-            raw_response_path = excluded.raw_response_path,
-            created_at = CURRENT_TIMESTAMP
+            raw_response_path = excluded.raw_response_path
         """,
         (
             question_id,
@@ -569,7 +589,7 @@ def compute_metrics(conn: sqlite3.Connection, run_id: int) -> None:
                 provider = str(row["provider"])
                 mentions = extract_org_mentions(answer)
                 expected = ORG_ALIASES.get(provider, {provider})
-                if mentions and provider not in mentions:
+                if mentions and not mentions.issubset(expected):
                     misattribution_found = True
                     if "who are you" in qtext:
                         indicators.append("identity_confusion")
@@ -627,7 +647,7 @@ def configured_providers() -> list[tuple[BaseProvider, str]]:
 
     if os.environ.get("DEEPSEEK_API_KEY"):
         providers.append((DeepSeekProvider(), os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")))
-    elif os.environ.get("OPENAI_API_KEY"):
+    if os.environ.get("OPENAI_API_KEY"):
         providers.append((OpenAIProvider(), os.environ.get("OPENAI_MODEL", "gpt-5")))
 
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -650,6 +670,15 @@ def main() -> int:
         questions = conn.execute(
             "SELECT id, subset, question_text FROM questions WHERE active = 1 ORDER BY id"
         ).fetchall()
+        max_questions_env = (os.environ.get("BENCHMARK_MAX_QUESTIONS") or "").strip()
+        if max_questions_env:
+            try:
+                max_questions = int(max_questions_env)
+            except ValueError as exc:
+                raise ValueError("BENCHMARK_MAX_QUESTIONS must be an integer") from exc
+            if max_questions > 0 and len(questions) > max_questions:
+                questions = questions[:max_questions]
+                print(f"Limiting benchmark to first {max_questions} active questions")
 
         for provider_obj, model_name in providers:
             model_id = get_or_create_model(conn, provider_obj.provider_name, model_name)
