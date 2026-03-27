@@ -24,6 +24,7 @@ MAX_TOKENS = 500
 PROMPT_VERSION = "v1"
 RUN_NAME = "pilot_t0"
 ALLOWED_EXPECTED_TYPES = {"factual", "ambiguous", "normative", "procedural"}
+MAX_QUESTIONS_HARD_CAP = 60
 
 REFUSAL_PATTERNS = [
     "i can't help with that",
@@ -676,6 +677,12 @@ def main() -> int:
                 max_questions = int(max_questions_env)
             except ValueError as exc:
                 raise ValueError("BENCHMARK_MAX_QUESTIONS must be an integer") from exc
+            if max_questions > MAX_QUESTIONS_HARD_CAP:
+                print(
+                    f"BENCHMARK_MAX_QUESTIONS={max_questions} exceeds hard cap "
+                    f"{MAX_QUESTIONS_HARD_CAP}; clamping."
+                )
+                max_questions = MAX_QUESTIONS_HARD_CAP
             if max_questions > 0 and len(questions) > max_questions:
                 questions = questions[:max_questions]
                 print(f"Limiting benchmark to first {max_questions} active questions")
