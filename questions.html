@@ -286,7 +286,10 @@ blockquote.doc-quote { border-left: 2px solid var(--border); margin: 4px 0 2px 0
               <option value="ignore">IGNORE</option>
             </select></label>
           </div>
-          <div id="qCount" class="q-count"></div>
+          <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+            <div id="qCount" class="q-count" style="margin:0"></div>
+            <button id="csvBtn" style="background:var(--surface-raised);color:var(--text);border:1px solid var(--border);border-radius:5px;padding:6px 14px;font-size:12px;font-family:inherit;cursor:pointer">Download CSV</button>
+          </div>
 
           <table class="q-table">
             <thead>
@@ -354,6 +357,23 @@ blockquote.doc-quote { border-left: 2px solid var(--border); margin: 4px 0 2px 0
         });
 
         filterQ();
+
+        document.getElementById('csvBtn').addEventListener('click', () => {
+          const visible = qRows.filter(r => !r.classList.contains('hidden'));
+          const header = 'id,question,subset,decision_type,divergence_type,actionability,score';
+          const lines = visible.map(r => {
+            const cells = [...r.children].map(c => c.textContent.trim());
+            return cells.map(c => '"' + c.replace(/"/g, '""') + '"').join(',');
+          });
+          const csv = header + '\n' + lines.join('\n');
+          const blob = new Blob([csv], { type: 'text/csv' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'decision-stability-questions.csv';
+          a.click();
+          URL.revokeObjectURL(url);
+        });
         </script>
         </body>
         </html>
